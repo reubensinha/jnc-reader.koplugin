@@ -84,16 +84,25 @@ function JNCApi:_raw_request(method, url, body, extra_headers)
         end
     end
 
-    local ok, code = https.request({
-        method  = method,
-        url     = url,
-        headers = headers,
-        source  = body and ltn12.source.string(body) or nil,
-        sink    = ltn12.sink.table(chunks),
-    })
+    logger.dbg("JNCApi: →", method, url)
+    local ok, code
+    local call_ok, call_err = pcall(function()
+        ok, code = https.request({
+            method  = method,
+            url     = url,
+            headers = headers,
+            source  = body and ltn12.source.string(body) or nil,
+            sink    = ltn12.sink.table(chunks),
+        })
+    end)
+    if not call_ok then
+        logger.warn("JNCApi: https.request threw:", call_err, "url:", url)
+        return nil, 0
+    end
+    logger.dbg("JNCApi: ←", code, url)
 
     if not ok then
-        logger.warn("JNCApi: HTTPS request failed:", code, "url:", url)
+        logger.warn("JNCApi: request failed:", code, "url:", url)
         return nil, 0
     end
 
@@ -101,17 +110,14 @@ function JNCApi:_raw_request(method, url, body, extra_headers)
 end
 
 --- Perform an API request and return the decoded JSON body and HTTP code.
--- Appends ?format=json by default; pass no_format=true to suppress (e.g. auth).
--- @param method     string
--- @param path       string   Path relative to API_BASE (e.g. "/series/foo/aggregate")
--- @param body       table|nil
--- @param no_format  boolean|nil  Skip appending ?format=json when true
+-- Appends ?format=json automatically; encodes the body table if provided.
+-- @param method string
+-- @param path   string  Path relative to API_BASE (e.g. "/auth/login")
+-- @param body   table|nil
 -- @return table|nil, number
-function JNCApi:_json_request(method, path, body, no_format)
+function JNCApi:_json_request(method, path, body)
     local url = API_BASE .. path
-    if not no_format then
-        url = url .. (path:find("?") and "&" or "?") .. "format=json"
-    end
+    url = url .. (path:find("?") and "&" or "?") .. "format=json"
 
     local encoded = body and json.encode(body) or nil
     local raw, code = self:_raw_request(method, url, encoded)
@@ -174,9 +180,9 @@ end
 -- @return boolean, string|nil  true on success; false + error message on failure
 function JNCApi:login(login, password)
     local body = { login = login, password = password, slim = true }
-    local data, code = self:_json_request("POST", "/auth/login", body, true)
+    local data, code = self:_json_request("POST", "/auth/login", body)
 
-    if code == 200 and data and data.id then
+    if (code == 200 or code == 201) and data and data.id then
         self.token = data.id
         logger.info("JNCApi: login successful")
         return true, nil
@@ -196,7 +202,7 @@ end
 --- Invalidate the session server-side and clear the local token.
 function JNCApi:logout()
     if self.token then
-        self:_json_request("POST", "/auth/logout", nil, true)
+        self:_json_request("POST", "/auth/logout")
         self.token = nil
         logger.info("JNCApi: logged out")
     end

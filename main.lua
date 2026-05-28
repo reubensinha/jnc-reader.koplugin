@@ -79,30 +79,48 @@ end
 
 function JNCReader:addToMainMenu(menu_items)
     menu_items.jncreader = {
-        text             = _("JNC Reader"),
-        sorting_hint     = "more_tools",
-        sub_item_table   = {
-            {
-                text     = _("Library"),
-                callback = function() self:onJNCReaderOpen() end,
-            },
-            {
-                text     = _("Sign out"),
-                callback = function() self:logout() end,
-            },
-        },
+        text         = _("JNC Reader"),
+        sorting_hint = "more_tools",
+        callback     = function()
+            self:onJNCReaderOpen()
+        end,
     }
 end
 
 function JNCReader:onJNCReaderOpen()
     NetworkMgr:runWhenOnline(function()
         if self.api:isLoggedIn() then
-            self:showLibrary()
+            self:_showMainMenu()
         else
             self:showLogin()
         end
     end)
     return true
+end
+
+function JNCReader:_showMainMenu()
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dialog
+    dialog = ButtonDialog:new{
+        title   = _("JNC Reader"),
+        buttons = {
+            {{
+                text     = _("Library"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:showLibrary()
+                end,
+            }},
+            {{
+                text     = _("Sign out"),
+                callback = function()
+                    UIManager:close(dialog)
+                    self:logout()
+                end,
+            }},
+        },
+    }
+    UIManager:show(dialog)
 end
 
 -- ---------------------------------------------------------------------------
