@@ -432,4 +432,43 @@ function JNCApi:getPartContent(part_id)
     return xhtml, nil
 end
 
+-- ---------------------------------------------------------------------------
+-- Events (New Releases feed)
+-- ---------------------------------------------------------------------------
+
+--- Fetch JNC events within a date range.
+--
+-- Endpoint: GET /app/v2/events?format=json&limit=200&start_date=X&end_date=Y
+-- The API returns ALL JNC events (not filtered by follows); callers filter
+-- client-side by matching event.serie.id against the user's followed series.
+--
+-- @param start_str string  ISO 8601 UTC datetime, e.g. "2026-05-17T00:00:00Z"
+-- @param end_str   string  ISO 8601 UTC datetime
+-- @return table|nil  Array of event objects, or nil on error
+-- @return number     HTTP status code
+function JNCApi:getEvents(start_str, end_str)
+    if not self.token then
+        return nil, 0
+    end
+
+    local url = API_BASE
+        .. "/events?format=json&limit=200"
+        .. "&start_date=" .. start_str
+        .. "&end_date="   .. end_str
+
+    local raw, code = self:_raw_request("GET", url, nil)
+    if not raw or code ~= 200 then
+        logger.warn("JNCApi: getEvents failed, code:", code)
+        return nil, code or 0
+    end
+
+    local data, err = json.decode(raw)
+    if not data then
+        logger.warn("JNCApi: getEvents JSON decode failed:", err)
+        return nil, code
+    end
+
+    return data.events or {}, code
+end
+
 return JNCApi
