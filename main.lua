@@ -75,24 +75,24 @@ end
 local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
 
---- Human-readable date label relative to today ("Today"/"Yesterday"/"May 17").
-local function dateLabel(ld)
-    if not ld then return "Unknown date" end
-    local today = os.date("*t")
-    if ld.year == today.year and ld.month == today.month and ld.day == today.day then
+--- Relative release label: "Today" / "Yesterday" / "N days ago" / "May 25, 2026".
+-- Uses noon timestamps to avoid DST edge effects; launch is UTC, compared to the
+-- local calendar day, which is close enough for a "days ago" display.
+local function relativeLaunch(launch_str)
+    local ld = parseLaunch(launch_str)
+    if not ld then return "" end
+    local t          = os.date("*t")
+    local launch_mid = os.time({ year = ld.year, month = ld.month, day = ld.day, hour = 12 })
+    local today_mid  = os.time({ year = t.year,  month = t.month,  day = t.day,  hour = 12 })
+    local days = math.floor((today_mid - launch_mid) / 86400 + 0.5)
+    if days <= 0 then
         return "Today"
-    end
-    local y = os.date("*t", os.time() - 86400)
-    if ld.year == y.year and ld.month == y.month and ld.day == y.day then
+    elseif days == 1 then
         return "Yesterday"
+    elseif days < 7 then
+        return days .. " days ago"
     end
-    return string.format("%s %d", MONTHS[ld.month] or "?", ld.day or 0)
-end
-
---- "HH:MM" time string from a parsed launch table.
-local function timeLabel(ld)
-    if not ld or not ld.hour then return "" end
-    return string.format("%02d:%02d", ld.hour, ld.min or 0)
+    return string.format("%s %d, %d", MONTHS[ld.month] or "?", ld.day, ld.year)
 end
 
 -- ---------------------------------------------------------------------------
@@ -469,33 +469,13 @@ function JNCReader:showNewReleases()
     -- Most recent first.
     table.sort(filtered, function(a, b) return (a.launch or "") > (b.launch or "") end)
 
-    -- Build a flat menu with non-tappable date-group separators.
+    -- Flat list, newest first: part name + relative release time; tap opens reader.
     local items = {}
-    local last_label = nil
     for _, ev in ipairs(filtered) do
-        local ld    = parseLaunch(ev.launch)
-        local label = dateLabel(ld)
-        if label ~= last_label then
-            items[#items + 1] = {
-                text     = "— " .. label .. " —",
-                bold     = true,
-                callback = function() end,
-            }
-            last_label = label
-        end
-
-        local serie  = ev.serie or {}
-        local title  = serie.title or "Unknown series"
-        local t      = timeLabel(ld)
         items[#items + 1] = {
-            text      = "  " .. title,
-            mandatory = t ~= "" and t or nil,
-            callback  = function()
-                -- Robust: open the series view for this release (the new part
-                -- appears at the end of the list). Direct part-open is deferred
-                -- until the events payload's part field is confirmed.
-                self:showSeries(serie)
-            end,
+            text      = self:_eventPartTitle(ev),
+            mandatory = relativeLaunch(ev.launch),
+            callback  = function() self:_openRelease(ev) end,
         }
     end
 
@@ -507,6 +487,73 @@ function JNCReader:showNewReleases()
         show_captions = false,
         onMenuHold    = function() end,
     })
+end
+
+--- Part name for a release row.
+-- `event.name` holds the full part title (e.g. "Proud to Be the Villainess:
+-- Volume 2 Part 6"); `event.details` is just "Prepub Publishing". Fall back to
+-- the series title only if `name` is somehow absent.
+function JNCReader:_eventPartTitle(ev)
+    if ev.name and ev.name ~= "" then
+        return ev.name
+    end
+    return ev.title or (ev.serie and ev.serie.title) or "Unknown release"
+end
+
+--- Open a release's part directly in the reader.
+-- The /events payload has no confirmed part id, so resolve the exact part via the
+-- series aggregate: match by launch datetime, else fall back to the newest part.
+function JNCReader:_openRelease(ev)
+    local serie = ev.serie or {}
+    local slug  = serie.slug or serie.titleslug or serie.id
+    jnc_log("_openRelease: slug", slug, "launch", ev.launch)
+
+    local spinner = InfoMessage:new{ text = _("Loading…") }
+    UIManager:show(spinner)
+    UIManager:forceRePaint()
+
+    local agg = self._agg_cache[slug]
+    if not agg then
+        local code
+        agg, code = self.api:getSeriesAggregate(slug)
+        if not agg or not agg.volumes then
+            UIManager:close(spinner)
+            if code == 401 or code == 403 then
+                self:_handleSessionExpired()
+            else
+                UIManager:show(InfoMessage:new{
+                    text = _("Could not load this release. Please try again."),
+                })
+            end
+            return
+        end
+        self._agg_cache[slug] = agg
+    end
+
+    -- Find the part: exact launch match first, else the newest part overall.
+    local match, newest
+    for _, vol_entry in ipairs(agg.volumes) do
+        for _, part in ipairs(vol_entry.parts or {}) do
+            if ev.launch and part.launch == ev.launch then
+                match = part
+            end
+            if not newest or (part.launch or "") > (newest.launch or "") then
+                newest = part
+            end
+        end
+    end
+    local part = match or newest
+
+    UIManager:close(spinner)
+
+    if not part or not part.id then
+        UIManager:show(InfoMessage:new{
+            text = _("Could not locate this release's part."),
+        })
+        return
+    end
+
+    self:openReader(part, serie.title)
 end
 
 -- ---------------------------------------------------------------------------
