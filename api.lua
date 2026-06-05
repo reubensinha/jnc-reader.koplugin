@@ -143,25 +143,11 @@ end
 -- @return string|nil  Raw bytes, or nil on failure
 -- @return number       HTTP status code (0 on network failure)
 function JNCApi:_fetch_bytes(url, accept)
-    local chunks = {}
-    local headers = { ["Accept"] = accept or "*/*" }
-    if self.token then
-        headers["Authorization"] = "Bearer " .. self.token
-    end
-
-    local ok, code = https.request({
-        method  = "GET",
-        url     = url,
-        headers = headers,
-        sink    = ltn12.sink.table(chunks),
-    })
-
-    if not ok then
-        logger.warn("JNCApi: _fetch_bytes network failure:", code, url)
-        return nil, 0
-    end
-
-    return table.concat(chunks), code
+    -- Delegate to _raw_request so this path also sends Accept-Encoding: identity
+    -- (the JNC server compresses by default; without it the embed XHTML / images
+    -- come back gzip/Brotli-encoded and LuaSocket cannot decode them). _raw_request
+    -- also adds the Bearer token, pcall safety, and returns the same (body, code).
+    return self:_raw_request("GET", url, nil, { ["Accept"] = accept or "*/*" })
 end
 
 -- ---------------------------------------------------------------------------
@@ -428,7 +414,15 @@ function JNCApi:getPartContent(part_id)
         end
     end
 
-    -- Step 5: Return the self-contained XHTML (entirely in memory).
+    -- Step 5: Normalise for crengine's standalone-file format detection.
+    -- crengine sniffs the document format from the first bytes. A leading
+    -- <?xml ...?> prolog makes it attempt XML/FB2 parsing and then fail
+    -- ("unsupported or invalid document") when it finds <html> instead of
+    -- <FictionBook>. Stripping the prolog makes the file begin with
+    -- <!DOCTYPE html>/<html>, so it is detected and parsed as HTML.
+    xhtml = xhtml:gsub("^%s*<%?xml.-%?>%s*", "")
+
+    -- Return the self-contained HTML (entirely in memory).
     return xhtml, nil
 end
 

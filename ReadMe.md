@@ -4,16 +4,20 @@ A [KOReader](https://koreader.rocks/) plugin for reading [J-Novel Club](https://
 
 ## Design principles
 
-- **Streaming only** — part content is fetched on demand and held in memory. Nothing is written to disk. When you navigate away from a part, the content is discarded.
-- **No piracy path** — the plugin does not provide any export, save, or download functionality. Access is gated by your active JNC subscription; if your token is invalid or your subscription has lapsed, the API returns an error and no content is shown.
-- **No third-party dependencies** — uses only libraries bundled with KOReader (`socket.http`, `ssl.https`, `ltn12`, `json`).
+- **Streaming, minimal footprint** — part content is fetched on demand and held in memory. To display it, KOReader's reader needs a real file, so the part is written to a single temporary `.html` in `koreader/jnc-reader-tmp/`. At most one part exists on disk at a time; it's cleared when you open the next part. (A future version will delete it as soon as the reader closes.)
+- **No piracy path** — the plugin provides no export, save, or download functionality. Access is gated by your active JNC subscription; if your token is invalid or your subscription has lapsed, the API returns an error and no content is shown.
+- **No third-party dependencies** — uses only libraries bundled with KOReader (`ssl.https`, `ltn12`, `json`, `mime`).
 
-## Features (v0.1)
+## Features (v0.2)
 
-- Sign in with your J-Novel Club account
-- Browse your subscription library by series
-- Read pre-pub parts directly in KOReader's text viewer
-- Session token persisted across KOReader restarts (no re-login needed)
+- Sign in with your J-Novel Club account; session persisted across KOReader restarts
+- **Home menu** — New Releases · Following · My Library · Sign out
+- **New Releases** — a feed of the last 14 days of pre-pub parts from series you follow, showing the part name and a relative release time ("Today", "3 days ago", "May 25, 2026"); tap to open the reader directly on that part
+- **Following** — your followed series; tap through to volumes and parts
+- **My Library** — your followed series, with owned volumes marked ★ in the series view
+- Read pre-pub parts in KOReader's native reader (pagination, fonts, bookmarks, etc.)
+
+> Text-only: cover thumbnails are intentionally absent in v0.2 — loading KOReader's image stack together with the network layer triggered a native crash on the Android 16 test device. See `PRODUCT_DESIGN_DOCUMENT.md` §6.
 
 ## Installation
 
@@ -38,17 +42,18 @@ To sign out, open the KOReader main menu → **More tools** → **JNC Reader** �
 jnc-reader.koplugin/
 ├── _meta.lua      — Plugin metadata (name, version, author)
 ├── main.lua       — Entry point; menu registration and UI flow
-├── api.lua        — JNC API client (auth, library, parts)
-├── renderer.lua   — XHTML → plain text converter
+├── api.lua        — JNC API client (auth, series, events, parts)
+├── renderer.lua   — Writes the self-contained part HTML to a short-lived temp file for the reader
 └── settings.lua   — Token and preference persistence
 ```
 
 ## Roadmap
 
-- [ ] Paginated reader (instead of scroll widget)
-- [ ] Cover image display in the library
-- [ ] Follow / unfollow series
-- [ ] Reading progress sync
+- [ ] Cover images (deferred — blocked by a native crash when the image stack is loaded alongside the network layer; see the design doc §6)
+- [ ] Delete the temp part file as soon as the reader closes (tighter anti-piracy / cleanup)
+- [ ] Flat "owned volumes" list across all series
+- [ ] Reading progress sync (mark parts as read)
+- [ ] Follow / unfollow series in-app
 - [ ] Native C++ Kobo app (no KOReader dependency)
 
 ## Legal

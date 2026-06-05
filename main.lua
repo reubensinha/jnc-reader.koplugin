@@ -38,12 +38,18 @@ local JNCRenderer = require("renderer")
 
 -- ---------------------------------------------------------------------------
 -- Lightweight debug logger (appends to <data>/jnc-debug.log)
+--
+-- Off by default. Set DEBUG = true to write verbose traces to jnc-debug.log
+-- (and KOReader's log) for troubleshooting; the jnc_log() call sites throughout
+-- this file then become active.
 -- ---------------------------------------------------------------------------
 
+local DEBUG       = false
 local DataStorage = require("datastorage")
 local _LOG_PATH   = DataStorage:getDataDir() .. "/jnc-debug.log"
 
 local function jnc_log(...)
+    if not DEBUG then return end
     local parts = { os.date("%H:%M:%S") }
     for i = 1, select("#", ...) do
         parts[#parts + 1] = tostring(select(i, ...))
@@ -120,16 +126,22 @@ function JNCReader:init()
     self._followed_list = nil  -- array of followed series
     self._followed_ids  = {}   -- [series.id] -> true (for events filtering)
     self._agg_cache     = {}   -- [slug] -> series aggregate
+    self._menus         = {}   -- JNC Menu widgets currently on screen (closed before opening the reader)
 
-    local lf = io.open(_LOG_PATH, "a")
-    if lf then
-        lf:write("\n=== JNC session start " .. os.date() .. " ===\n")
-        lf:close()
+    if DEBUG then
+        local lf = io.open(_LOG_PATH, "a")
+        if lf then
+            lf:write("\n=== JNC session start " .. os.date() .. " ===\n")
+            lf:close()
+        end
     end
     jnc_log("init: plugin loaded (text-only v0.2)")
 
-    -- Clean up any temp files left over from a previous crash.
-    self.renderer:cleanupStaleTemps()
+    -- NOTE: do NOT clean up temp files here. The plugin re-initialises during the
+    -- FileManager→Reader transition, so an init-time cleanup would delete the part
+    -- file that ReaderUI is about to open (crengine then fails: "unsupported or
+    -- invalid document"). Old part files are instead cleared in renderer:writeTemp
+    -- when the next part is opened.
 
     -- Restore a saved session token so the user stays logged in across restarts.
     local saved_token = self.settings:getToken()
@@ -177,9 +189,25 @@ end
 -- Home screen — full-page navigation menu
 -- ---------------------------------------------------------------------------
 
+--- Show a JNC Menu and track it so it can be torn down before opening the reader.
+function JNCReader:_pushMenu(menu)
+    self._menus[#self._menus + 1] = menu
+    UIManager:show(menu)
+end
+
+--- Close all tracked JNC menus (newest first). Called before ReaderUI:showReader,
+-- since handing off to the reader with our menus still on the UIManager stack causes
+-- crengine's document load to fail ("unsupported or invalid document" → exit).
+function JNCReader:_closeMenus()
+    for i = #self._menus, 1, -1 do
+        UIManager:close(self._menus[i])
+    end
+    self._menus = {}
+end
+
 function JNCReader:_showMainMenu()
     jnc_log("_showMainMenu: showing home")
-    UIManager:show(Menu:new{
+    self:_pushMenu(Menu:new{
         title         = _("JNC Reader"),
         item_table    = {
             { text = _("New Releases"), callback = function() self:showNewReleases() end },
@@ -357,7 +385,7 @@ function JNCReader:showFollowing()
     end
 
     jnc_log("showFollowing: showing", #items, "series")
-    UIManager:show(Menu:new{
+    self:_pushMenu(Menu:new{
         title         = _("Following"),
         item_table    = items,
         is_borderless = true,
@@ -404,7 +432,7 @@ function JNCReader:showLibrary()
     end
 
     jnc_log("showLibrary: showing", #items, "series")
-    UIManager:show(Menu:new{
+    self:_pushMenu(Menu:new{
         title         = _("My Library — tap a series to see owned volumes"),
         item_table    = items,
         is_borderless = true,
@@ -480,7 +508,7 @@ function JNCReader:showNewReleases()
     end
 
     jnc_log("showNewReleases: showing", #items, "rows")
-    UIManager:show(Menu:new{
+    self:_pushMenu(Menu:new{
         title         = _("New Releases"),
         item_table    = items,
         is_borderless = true,
@@ -618,7 +646,7 @@ function JNCReader:showSeries(series)
     end
 
     jnc_log("showSeries: showing", #items, "rows")
-    UIManager:show(Menu:new{
+    self:_pushMenu(Menu:new{
         title         = series.title or slug,
         item_table    = items,
         is_borderless = true,
@@ -663,11 +691,10 @@ function JNCReader:openReader(part, series_title)
         return
     end
 
+    -- Tear down our menus, then hand off to the reader. The temp file is left in
+    -- place for the whole reading session and is cleared on the next part open.
+    self:_closeMenus()
     ReaderUI:showReader(path)
-
-    UIManager:scheduleIn(5, function()
-        self.renderer:cleanupTemp()
-    end)
 end
 
 -- ---------------------------------------------------------------------------

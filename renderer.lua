@@ -26,8 +26,11 @@ local DataStorage = require("datastorage")
 local lfs         = require("libs/libkoreader-lfs")
 local logger      = require("logger")
 
--- Temp files live in KOReader's cache dir, not in book storage.
-local TEMP_DIR = DataStorage:getDataDir() .. "/cache/jnc-reader/"
+-- Temp files live in a dedicated dir under the KOReader data dir — deliberately
+-- NOT under cache/. Opening a document from inside KOReader's own cache directory
+-- makes crengine's document-load fail ("unsupported or invalid document"). The same
+-- file opens fine from this non-cache location.
+local TEMP_DIR = DataStorage:getDataDir() .. "/jnc-reader-tmp/"
 
 --- @class JNCRenderer
 local JNCRenderer = {}
@@ -51,12 +54,15 @@ local function ensureTempDir()
     end
 end
 
---- Write self-contained XHTML to a short-lived temp file and return its path.
+--- Write self-contained HTML to a temp file for the reader and return its path.
 --
--- The caller (main.lua) is responsible for deleting the file after
--- ReaderUI has opened it, using JNCRenderer:cleanupTemp().
+-- Any previously written part file is deleted first (so at most one exists), but
+-- the file just written is left in place: crengine needs it for the whole reading
+-- session, and it is replaced on the next openReader() call. Do NOT delete it from
+-- plugin init — the plugin re-initialises during the FileManager→Reader transition,
+-- which would wipe the file mid-open.
 --
--- @param xhtml    string  Self-contained XHTML (images already inlined)
+-- @param xhtml    string  Self-contained HTML (images already inlined)
 -- @param part_id  string  Used to generate a deterministic filename
 -- @return string|nil  Absolute path to the temp file, or nil on I/O error
 -- @return string|nil  Error message on failure, nil on success
@@ -64,8 +70,22 @@ function JNCRenderer:writeTemp(xhtml, part_id)
     ensureTempDir()
 
     -- Sanitise part_id for use in a filename.
-    local safe_id = (part_id:gsub("[^%w%-]", "_"))
-    local path = TEMP_DIR .. "part_" .. safe_id .. ".xhtml"
+    -- Use a .html extension: KOReader's DocumentRegistry recognises .html via
+    -- crengine's HTML parser, which handles the XHTML content fine.
+    local safe_id  = (part_id:gsub("[^%w%-]", "_"))
+    local filename = "part_" .. safe_id .. ".html"
+    local path     = TEMP_DIR .. filename
+
+    -- Clean up previously written part files BEFORE writing the new one — but
+    -- never the file we're about to write. We deliberately do NOT delete the
+    -- active file on a timer or at init: crengine needs it for the whole reading
+    -- session, and the plugin re-initialises during the FileManager→Reader
+    -- transition (an init-time delete would wipe the file mid-open).
+    for file in lfs.dir(TEMP_DIR) do
+        if file ~= "." and file ~= ".." and file ~= filename then
+            os.remove(TEMP_DIR .. file)
+        end
+    end
 
     local f, err = io.open(path, "w")
     if not f then
@@ -82,7 +102,9 @@ function JNCRenderer:writeTemp(xhtml, part_id)
 end
 
 --- Delete the most recently written temp file and clear the reference.
--- Call this after ReaderUI has finished with the file.
+-- Not currently called (the active file is left in place for the whole reading
+-- session and the previous file is cleared by writeTemp on the next open).
+-- Intended for the future "delete the part file when the reader closes" feature.
 function JNCRenderer:cleanupTemp()
     if self._current_temp then
         local ok, err = os.remove(self._current_temp)
@@ -93,19 +115,6 @@ function JNCRenderer:cleanupTemp()
                 self._current_temp, err)
         end
         self._current_temp = nil
-    end
-end
-
---- Delete any leftover temp files from previous sessions.
--- Called once on plugin init as a housekeeping measure.
-function JNCRenderer:cleanupStaleTemps()
-    if lfs.attributes(TEMP_DIR, "mode") ~= "directory" then return end
-    for file in lfs.dir(TEMP_DIR) do
-        if file ~= "." and file ~= ".." then
-            local path = TEMP_DIR .. file
-            os.remove(path)
-            logger.dbg("JNCRenderer: removed stale temp file", path)
-        end
     end
 end
 
