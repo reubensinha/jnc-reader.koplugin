@@ -1,0 +1,28 @@
+name: Lint
+
+# Parse-check every Lua file on each push / pull request. This catches syntax
+# errors before release (KOReader runs LuaJIT; Lua 5.1 syntax is compatible).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install Lua 5.1
+        run: sudo apt-get update && sudo apt-get install -y lua5.1
+
+      - name: Syntax-check Lua files
+        run: |
+          set -eu
+          status=0
+          for f in *.lua; do
+            echo "checking $f"
+            luac5.1 -p "$f" || status=1
+          done
+          exit $status

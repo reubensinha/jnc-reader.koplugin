@@ -1,0 +1,37 @@
+name: Release
+
+# Build the installable plugin zip and attach it to a GitHub Release whenever a
+# version tag (e.g. v0.2.0) is pushed.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Package plugin
+        run: |
+          set -eu
+          # KOReader expects a folder named jnc-reader.koplugin/ inside plugins/.
+          # The repo root *is* the plugin, so stage the runtime files into a folder
+          # of that name and zip it (excludes the design doc, .github, screenshots,
+          # and any local/gitignored files).
+          mkdir -p "dist/jnc-reader.koplugin"
+          cp _meta.lua main.lua api.lua renderer.lua settings.lua ReadMe.md LICENSE \
+             "dist/jnc-reader.koplugin/"
+          ( cd dist && zip -r "jnc-reader.koplugin.zip" "jnc-reader.koplugin" )
+          ls -l dist
+
+      - name: Create release and upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/jnc-reader.koplugin.zip
+          generate_release_notes: true

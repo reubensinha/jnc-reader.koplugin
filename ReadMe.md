@@ -2,7 +2,7 @@
 
 A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](https://j-novel.club/) subscription directly on your e-reader, without leaving KOReader.
 
-> **Active J-Novel Club subscription Requried.**
+> **Active J-Novel Club subscription required.**
 
 ---
 
@@ -12,8 +12,20 @@ A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](htt
 - **Home menu** — New Releases · Following · My Library · Sign out.
 - **New Releases** — the last 30 days of pre-pub parts from series you follow.
 - **Following** — your followed series; tap through to volumes and parts.
-- **My Library** — your followed series, with owned volumes marked ★ in the series view.
+- **My Library** — the series you own volumes of; open one to read just your owned volumes.
 - **Reads in KOReader's native reader** — pagination, fonts, line spacing, bookmarks, progress, and everything else KOReader gives you.
+
+---
+
+## Screenshots
+
+<!-- Add images to the screenshots/ folder and they'll appear here. -->
+
+| Home | New Releases | Series | Reader |
+| :--: | :--: | :--: | :--: |
+| ![Home menu](screenshots/home.png) | ![New Releases](screenshots/new-releases.png) | ![Series view](screenshots/series.png) | ![Reader](screenshots/reader.png) |
+
+*Screenshots coming soon.*
 
 ---
 
@@ -27,7 +39,11 @@ A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](htt
 
 ## Installation
 
-1. Copy the `jnc-reader.koplugin/` folder into KOReader's `plugins/` directory. The location depends on your device:
+1. Get the plugin folder `jnc-reader.koplugin/`:
+   - **Recommended:** download `jnc-reader.koplugin.zip` from the [latest release](../../releases/latest) and unzip it — you'll get a `jnc-reader.koplugin/` folder.
+   - Or clone/download this repository (the repo *is* the plugin folder; rename the folder to `jnc-reader.koplugin` if needed).
+
+2. Copy the `jnc-reader.koplugin/` folder into KOReader's `plugins/` directory. The location depends on your device:
 
    | Device          | Plugins folder                |
    | --------------- | ----------------------------- |
@@ -38,9 +54,9 @@ A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](htt
 
    The result should be e.g. `…/koreader/plugins/jnc-reader.koplugin/main.lua`.
 
-2. **Restart KOReader.**
+3. **Restart KOReader.**
 
-3. Open the main menu → **More tools** → **JNC Reader**.
+4. Open the main menu → **More tools** → **JNC Reader**.
 
 ---
 
@@ -51,7 +67,7 @@ A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](htt
 3. From the home menu, choose:
    - **New Releases** — tap a release to start reading it immediately.
    - **Following** — pick a series, then a part.
-   - **My Library** — pick a series to see which volumes you own (★) and read its parts.
+   - **My Library** — series you own; pick one to read your owned volumes' parts.
 4. To **sign out**, open the home menu → **Sign out**.
 
 ---

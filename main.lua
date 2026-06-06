@@ -139,6 +139,7 @@ function JNCReader:init()
     self._followed_list = nil  -- array of followed series
     self._followed_ids  = {}   -- [series.id] -> true (for events filtering)
     self._agg_cache     = {}   -- [slug] -> series aggregate
+    self._library       = nil  -- array of owned "book" entries (GET /me/library)
     self._menus         = {}   -- JNC Menu widgets currently on screen (closed before opening the reader)
 
     if DEBUG then
@@ -322,6 +323,7 @@ function JNCReader:_handleSessionExpired()
     self._followed_list = nil
     self._followed_ids  = {}
     self._agg_cache     = {}
+    self._library       = nil
     UIManager:show(InfoMessage:new{
         text    = _("Session expired — please sign in again."),
         timeout = 3,
@@ -367,6 +369,32 @@ function JNCReader:_ensureFollowedList()
             if s.id then self._followed_ids[s.id] = true end
         end
     end
+    return true
+end
+
+--- Ensure self._library (owned "book" entries from GET /me/library) is populated.
+-- Returns false on failure (handling 401/403 → re-login).
+function JNCReader:_ensureLibrary()
+    if self._library then
+        return true
+    end
+
+    jnc_log("_ensureLibrary: calling getLibrary")
+    local books, code = self.api:getLibrary()
+    jnc_log("_ensureLibrary: returned code:", code, "count:", books and #books or "nil")
+
+    if not books then
+        if code == 401 or code == 403 then
+            self:_handleSessionExpired()
+        else
+            UIManager:show(InfoMessage:new{
+                text = _("Could not load your library. Please check your connection and try again."),
+            })
+        end
+        return false
+    end
+
+    self._library = books
     return true
 end
 
@@ -416,9 +444,10 @@ end
 -- ---------------------------------------------------------------------------
 -- My Library screen
 --
--- Lists followed series; owned volumes are marked with ★ inside the series
--- view. (A dedicated cross-series owned-volume listing requires fetching every
--- series aggregate up front, which is deferred.)
+-- Shows only series the user OWNS at least one volume of, derived from
+-- GET /me/library. Tapping a series opens it in "owned only" mode (§showSeries),
+-- which lists just the owned volumes and their parts. This is distinct from
+-- Following, which lists every followed series and all volumes.
 -- ---------------------------------------------------------------------------
 
 function JNCReader:showLibrary()
@@ -427,32 +456,41 @@ function JNCReader:showLibrary()
     UIManager:show(spinner)
     UIManager:forceRePaint()
 
-    local ok = self:_ensureFollowedList()
+    local ok = self:_ensureLibrary()
     UIManager:close(spinner)
     if not ok then return end
 
-    if #self._followed_list == 0 then
+    -- Group owned books by series (novels only); one row per distinct series.
+    local by_id = {}
+    local series_list = {}
+    for _, book in ipairs(self._library) do
+        local serie = book.serie
+        if serie and serie.id and isNovel(serie) and not by_id[serie.id] then
+            by_id[serie.id] = true
+            series_list[#series_list + 1] = serie
+        end
+    end
+
+    if #series_list == 0 then
         UIManager:show(InfoMessage:new{
-            text = _("No followed series yet. Follow and purchase volumes at j-novel.club."),
+            text = _("You don't own any volumes yet. Purchase volumes at j-novel.club."),
         })
         return
     end
 
-    local sorted = {}
-    for _, s in ipairs(self._followed_list) do sorted[#sorted + 1] = s end
-    table.sort(sorted, function(a, b) return (a.title or "") < (b.title or "") end)
+    table.sort(series_list, function(a, b) return (a.title or "") < (b.title or "") end)
 
     local items = {}
-    for _, series in ipairs(sorted) do
+    for _, series in ipairs(series_list) do
         items[#items + 1] = {
-            text     = series.title or series.titleslug or series.id or "Unknown",
-            callback = function() self:showSeries(series) end,
+            text     = series.title or series.slug or series.id or "Unknown",
+            callback = function() self:showSeries(series, { owned_only = true }) end,
         }
     end
 
-    jnc_log("showLibrary: showing", #items, "series")
+    jnc_log("showLibrary: showing", #items, "owned series")
     self:_pushMenu(Menu:new{
-        title         = _("My Library — tap a series to see owned volumes"),
+        title         = _("My Library"),
         item_table    = items,
         is_borderless = true,
         show_captions = false,
@@ -609,9 +647,14 @@ end
 -- Series screen — volumes and parts
 -- ---------------------------------------------------------------------------
 
-function JNCReader:showSeries(series)
+-- @param series table  Series object (needs slug/id/title)
+-- @param opts   table|nil  { owned_only = bool } — when true (My Library), show only
+--                          volumes the user owns; otherwise (Following) show all.
+function JNCReader:showSeries(series, opts)
+    opts = opts or {}
+    local owned_only = opts.owned_only == true
     local slug = series.slug or series.titleslug or series.id
-    jnc_log("showSeries: start, slug:", slug)
+    jnc_log("showSeries: start, slug:", slug, "owned_only:", tostring(owned_only))
 
     local agg = self._agg_cache[slug]
     if not agg then
@@ -643,32 +686,37 @@ function JNCReader:showSeries(series)
         local vol   = vol_entry.volume or {}
         local parts = vol_entry.parts or {}
 
-        local owned = vol.owned and "  ★ owned" or ""
-        items[#items + 1] = {
-            text     = (vol.title or ("Volume " .. tostring(vol.number or "?"))) .. owned,
-            bold     = true,
-            callback = function() end,
-        }
-
-        for _, part in ipairs(parts) do
-            local part_title = part.title or ("Part " .. tostring(part.number or "?"))
+        -- In owned-only mode, skip volumes the user doesn't own.
+        if not (owned_only and not vol.owned) then
+            local marker = (vol.owned and not owned_only) and "  ★ owned" or ""
             items[#items + 1] = {
-                text     = "    " .. part_title,
-                callback = function() self:openReader(part, series.title) end,
+                text     = (vol.title or ("Volume " .. tostring(vol.number or "?"))) .. marker,
+                bold     = true,
+                callback = function() end,
             }
+
+            for _, part in ipairs(parts) do
+                local part_title = part.title or ("Part " .. tostring(part.number or "?"))
+                items[#items + 1] = {
+                    text     = "    " .. part_title,
+                    callback = function() self:openReader(part, series.title) end,
+                }
+            end
         end
     end
 
     if #items == 0 then
         UIManager:show(InfoMessage:new{
-            text = _("No parts are currently available for this series."),
+            text = owned_only
+                and _("You don't own any volumes in this series yet.")
+                or  _("No parts are currently available for this series."),
         })
         return
     end
 
     jnc_log("showSeries: showing", #items, "rows")
     self:_pushMenu(Menu:new{
-        title         = series.title or slug,
+        title         = (series.title or slug) .. (owned_only and _(" — Owned") or ""),
         item_table    = items,
         is_borderless = true,
         show_captions = false,
@@ -688,13 +736,15 @@ function JNCReader:openReader(part, series_title)
     UIManager:show(spinner)
     UIManager:forceRePaint()
 
-    local xhtml, err = self.api:getPartContent(part.id)
+    local xhtml, err, code = self.api:getPartContent(part.id)
     UIManager:close(spinner)
 
     if not xhtml then
-        if err and (err:find("401") or err:find("Access denied")) then
+        if code == 401 then
+            -- Expired/invalid token → clear and re-login.
             self:_handleSessionExpired()
         else
+            -- 403 (not entitled), network, or server error → just inform.
             UIManager:show(InfoMessage:new{
                 text = err or _("Could not load part content. Please try again."),
             })
@@ -755,6 +805,7 @@ function JNCReader:logout()
     self._followed_list = nil
     self._followed_ids  = {}
     self._agg_cache     = {}
+    self._library       = nil
     UIManager:show(InfoMessage:new{ text = _("Signed out of JNC Reader.") })
 end
 

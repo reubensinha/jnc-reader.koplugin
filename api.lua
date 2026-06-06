@@ -36,6 +36,17 @@ local CDN_HOSTS = {
     "https://d2dq7ifhe7bu0f.cloudfront.net",
 }
 
+-- Safe JSON decode. KOReader's json (rapidjson) *raises* on invalid input, so a
+-- malformed body — an HTML error/gateway page, or a future API change — would crash
+-- the plugin if decoded directly. Wrap it so callers just get nil and degrade.
+local function decode_json(raw)
+    if type(raw) ~= "string" or raw == "" then return nil end
+    local ok, value = pcall(json.decode, raw)
+    if ok then return value end
+    logger.warn("JNCApi: JSON decode failed (got", #raw, "bytes; head:", raw:sub(1, 80), ")")
+    return nil
+end
+
 -- ---------------------------------------------------------------------------
 -- JNCApi class
 -- ---------------------------------------------------------------------------
@@ -127,9 +138,8 @@ function JNCApi:_json_request(method, path, body)
         return nil, 0
     end
 
-    local decoded, err = json.decode(raw)
+    local decoded = decode_json(raw)
     if not decoded then
-        logger.warn("JNCApi: JSON decode failed:", err, "raw:", raw:sub(1, 200))
         return nil, code
     end
 
@@ -226,9 +236,8 @@ function JNCApi:getFollowedSeries()
             return nil, code
         end
 
-        local data, err = json.decode(raw)
+        local data = decode_json(raw)
         if not data then
-            logger.warn("JNCApi: getFollowedSeries JSON decode failed:", err)
             return nil, code
         end
 
@@ -243,6 +252,55 @@ function JNCApi:getFollowedSeries()
     until false
 
     return all_series, 200
+end
+
+-- ---------------------------------------------------------------------------
+-- Owned library
+-- ---------------------------------------------------------------------------
+
+--- Fetch the user's owned volumes ("library").
+--
+-- Endpoint: GET /app/v2/me/library?format=json&skip=N
+-- Returns an object: { books: [ { id, volume{...,owned}, serie{...}, ... } ], pagination }
+-- Each book pairs an owned volume with its parent series, so this is a flat
+-- "everything I own" list (no per-series aggregate fetch needed).
+--
+-- @return table|nil  Array of all book entries, or nil on error
+-- @return number     HTTP status code (200 on success)
+function JNCApi:getLibrary()
+    if not self.token then
+        return nil, 0
+    end
+
+    local all_books = {}
+    local skip = 0
+    repeat
+        local url = API_BASE .. "/me/library?format=json&skip=" .. skip
+        local raw, code = self:_raw_request("GET", url, nil)
+        if not raw or code ~= 200 then
+            logger.warn("JNCApi: getLibrary failed, code:", code, "skip:", skip)
+            if #all_books > 0 then break end
+            return nil, code or 0
+        end
+
+        local data = decode_json(raw)
+        if not data then
+            if #all_books > 0 then break end
+            return nil, code
+        end
+
+        local page = data.books or {}
+        for _, b in ipairs(page) do
+            all_books[#all_books + 1] = b
+        end
+        skip = skip + #page
+
+        if data.pagination and data.pagination.lastPage then break end
+        if #page == 0 then break end
+        if #all_books >= 5000 then break end  -- sanity cap
+    until false
+
+    return all_books, 200
 end
 
 -- ---------------------------------------------------------------------------
@@ -370,9 +428,10 @@ end
 -- @param part_id string  Part UUID
 -- @return string|nil  Self-contained XHTML ready for display, or nil on error
 -- @return string|nil  Error message on failure, nil on success
+-- @return number|nil  HTTP status code on failure (e.g. 401 = expired, 403 = no access)
 function JNCApi:getPartContent(part_id)
     if not self.token then
-        return nil, "Not logged in."
+        return nil, "Not logged in.", 401
     end
 
     -- Step 1: Fetch the XHTML.
@@ -383,13 +442,18 @@ function JNCApi:getPartContent(part_id)
     )
 
     if not xhtml then
-        return nil, "Network error fetching part content."
+        return nil, "Network error fetching part content. Check your connection.", code or 0
     end
-    if code == 401 or code == 403 then
-        return nil, "Access denied — your subscription may not cover this content."
+    if code == 401 then
+        -- Token expired/invalid → caller re-authenticates.
+        return nil, "Your session has expired. Please sign in again.", 401
+    end
+    if code == 403 then
+        -- Authenticated but not entitled (subscription tier / not yet available).
+        return nil, "Access denied — your subscription may not cover this content.", 403
     end
     if code ~= 200 then
-        return nil, string.format("Server returned HTTP %d for part content.", code)
+        return nil, string.format("Server returned HTTP %d for part content.", code), code
     end
 
     logger.dbg("JNCApi: fetched part", part_id, "(", #xhtml, "bytes XHTML)")
@@ -464,9 +528,8 @@ function JNCApi:getEvents(start_str, end_str)
             return nil, code or 0
         end
 
-        local data, err = json.decode(raw)
+        local data = decode_json(raw)
         if not data then
-            logger.warn("JNCApi: getEvents JSON decode failed:", err)
             if #all_events > 0 then break end
             return nil, code
         end
