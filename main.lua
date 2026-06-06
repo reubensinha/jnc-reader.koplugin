@@ -13,9 +13,11 @@ performing an HTTPS request reliably aborts the process in a native
 ("process reaper") thread. Covers are deferred to a future version. See the
 git history / PRODUCT_DESIGN_DOCUMENT.md for the full investigation.
 
-Part content is fetched on demand, images inlined as base64 data URIs in
-memory, then written to a short-lived temp file that ReaderUI opens and which
-is deleted seconds later. No content is written to user-visible storage.
+Part content is fetched on demand and images are inlined as base64 data URIs in
+memory. To display it, the part is written to a single temporary .html file in
+koreader/jnc-reader-tmp/ that ReaderUI opens; that file is deleted when the reader
+is closed (and any previous one is cleared on the next open). At most one part
+exists on disk at a time, only while it is open.
 
 @module koplugin.jnc-reader
 --]]--
@@ -61,6 +63,17 @@ local function jnc_log(...)
         f:close()
     end
     logger.info("JNC:", line)
+end
+
+-- ---------------------------------------------------------------------------
+-- Content filtering
+-- ---------------------------------------------------------------------------
+
+--- JNC series carry a `type` ("NOVEL" / "MANGA" / …). This plugin supports novels
+-- only. Treat an absent type as a novel so we never accidentally hide content if
+-- the field is ever missing.
+local function isNovel(s)
+    return not (s and s.type) or s.type == "NOVEL"
 end
 
 -- ---------------------------------------------------------------------------
@@ -343,10 +356,16 @@ function JNCReader:_ensureFollowedList()
         return false
     end
 
-    self._followed_list = series_list
+    -- Novels only: drop manga (and any non-novel) series here so Following,
+    -- My Library, and New Releases (which filters events by _followed_ids) are all
+    -- novel-only from one place.
+    self._followed_list = {}
     self._followed_ids  = {}
     for _, s in ipairs(series_list) do
-        if s.id then self._followed_ids[s.id] = true end
+        if isNovel(s) then
+            self._followed_list[#self._followed_list + 1] = s
+            if s.id then self._followed_ids[s.id] = true end
+        end
     end
     return true
 end
@@ -458,7 +477,7 @@ function JNCReader:showNewReleases()
     end
 
     local now_str  = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time())
-    local past_str = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time() - 14 * 24 * 60 * 60)
+    local past_str = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time() - 30 * 24 * 60 * 60)
     jnc_log("showNewReleases: calling getEvents", past_str, "→", now_str)
     local events, code = self.api:getEvents(past_str, now_str)
     jnc_log("showNewReleases: getEvents returned code:", code,
@@ -476,12 +495,14 @@ function JNCReader:showNewReleases()
         return
     end
 
-    -- Keep only pre-pub releases for series the user follows.
+    -- Keep only pre-pub novel releases for series the user follows.
+    -- (_followed_ids is already novel-only; the isNovel check is a backstop.)
     local filtered = {}
     for _, ev in ipairs(events) do
         local sid = ev.serie and ev.serie.id
         local details = ev.details or ""
-        if sid and self._followed_ids[sid] and details:find("Prepub", 1, true) then
+        if sid and self._followed_ids[sid] and details:find("Prepub", 1, true)
+            and isNovel(ev.serie) then
             filtered[#filtered + 1] = ev
         end
     end
@@ -489,7 +510,7 @@ function JNCReader:showNewReleases()
 
     if #filtered == 0 then
         UIManager:show(InfoMessage:new{
-            text = _("No new releases from your followed series in the last 14 days."),
+            text = _("No new releases from your followed series in the last 30 days."),
         })
         return
     end
@@ -691,10 +712,37 @@ function JNCReader:openReader(part, series_title)
         return
     end
 
-    -- Tear down our menus, then hand off to the reader. The temp file is left in
-    -- place for the whole reading session and is cleared on the next part open.
+    -- Tear down our menus, then hand off to the reader. The temp file is deleted
+    -- when the reader closes (onCloseDocument); writeTemp also clears any prior file
+    -- on the next open as a safety net.
     self:_closeMenus()
     ReaderUI:showReader(path)
+end
+
+-- ---------------------------------------------------------------------------
+-- Clean exit from a part we opened
+-- ---------------------------------------------------------------------------
+
+--- Fires (in the reader context) when any document is closed. For the temp parts
+-- we generate, return the file browser to the home folder instead of the temp dir,
+-- drop the part from the recent-files history, and delete the temp file.
+-- A no-op for normal books. Must not return true (CloseDocument is a broadcast).
+function JNCReader:onCloseDocument()
+    local doc  = self.ui and self.ui.document
+    local path = doc and doc.file
+    if path and path:find("jnc-reader-tmp", 1, true) then
+        -- Best-effort: send the file browser to the home folder rather than the
+        -- temp dir. (Not always honoured by the plain close path — documented as a
+        -- known limitation.)
+        local ok_fmu, filemanagerutil = pcall(require, "apps/filemanager/filemanagerutil")
+        if ok_fmu and self.ui.setLastDirForFileBrowser then
+            self.ui:setLastDirForFileBrowser(filemanagerutil.getHomeFolder())
+        end
+        -- Drop the temp part from recent-files and delete it (anti-piracy).
+        local ok_h, ReadHistory = pcall(require, "readhistory")
+        if ok_h then ReadHistory:removeItemByPath(path) end
+        os.remove(path)
+    end
 end
 
 -- ---------------------------------------------------------------------------

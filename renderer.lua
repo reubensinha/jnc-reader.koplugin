@@ -1,23 +1,22 @@
 --[[--
 Content renderer for JNC Reader.
 
-Prepares the self-contained XHTML returned by JNCApi:getPartContent() for
-display in KOReader. Because getPartContent() has already inlined all images
-as base64 data URIs, the XHTML is a complete, standalone document.
+Prepares the self-contained HTML returned by JNCApi:getPartContent() for
+display in KOReader. getPartContent() has already inlined all images as base64
+data URIs, so the document is complete and standalone.
 
-KOReader can render XHTML/HTML directly via its ReaderUI (the same engine
-used for sideloaded EPUBs). This module writes the XHTML to a temporary file
-in KOReader's cache directory so ReaderUI can open it, then cleans it up
-when the reader is closed.
+KOReader renders HTML via its ReaderUI (the same crengine engine used for
+sideloaded EPUBs). This module writes the document to a single temp .html file
+in koreader/jnc-reader-tmp/ so ReaderUI can open it.
 
 PRIVACY / ANTI-PIRACY NOTE:
-  The temp file is placed in KOReader's own cache directory and is deleted
-  immediately after ReaderUI signals it has loaded the document. Its lifetime
-  is measured in seconds. We never write to user-visible directories
-  (the Device's book storage), so the content cannot be "found" by
-  a file browser. A motivated user could theoretically copy it during that
-  window, but that is true of any streaming reader — the goal is to avoid
-  providing a deliberate save path, not to enforce DRM.
+  At most one part file exists at a time. writeTemp() clears any previous part
+  file before writing the new one, and main.lua deletes the active file when the
+  reader is closed (onCloseDocument). The file is therefore present only while a
+  part is open. (Note: jnc-reader-tmp/ is a browsable location, so during reading
+  the file is technically reachable — the goal is to avoid a deliberate save path,
+  not to enforce DRM.) The temp dir is deliberately NOT under cache/: crengine
+  fails to load a document from inside KOReader's own cache directory.
 
 @module koplugin.jnc-reader.renderer
 --]]--

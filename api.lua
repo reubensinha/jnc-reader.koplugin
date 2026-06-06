@@ -2,8 +2,9 @@
 JNC API client for JNC Reader.
 
 Communicates with the labs.j-novel.club v2 API.
-All part content and images are held in memory only — nothing is written
-to disk — in compliance with J-Novel Club's content policy.
+Responses and images are handled in memory. Part content is returned to the
+caller, which writes a single short-lived temp file for KOReader's reader and
+deletes it when the reader closes (see renderer.lua / main.lua).
 
 Endpoint bases (confirmed from jncep v55 source):
   API:   https://labs.j-novel.club/app/v2
@@ -430,39 +431,58 @@ end
 -- Events (New Releases feed)
 -- ---------------------------------------------------------------------------
 
---- Fetch JNC events within a date range.
+--- Fetch JNC events within a date range (paginated to cover the whole window).
 --
--- Endpoint: GET /app/v2/events?format=json&limit=200&start_date=X&end_date=Y
--- The API returns ALL JNC events (not filtered by follows); callers filter
--- client-side by matching event.serie.id against the user's followed series.
+-- Endpoint: GET /app/v2/events?format=json&limit=200&skip=N&start_date=X&end_date=Y
+-- The endpoint caps each page at 200 events and the global feed easily exceeds that
+-- over a month, so we loop on ?skip until pagination.lastPage. The API returns ALL
+-- JNC events (not filtered by follows); callers filter client-side by matching
+-- event.serie.id against the user's followed series.
 --
--- @param start_str string  ISO 8601 UTC datetime, e.g. "2026-05-17T00:00:00Z"
+-- @param start_str string  ISO 8601 UTC datetime, e.g. "2026-05-07T00:00:00Z"
 -- @param end_str   string  ISO 8601 UTC datetime
--- @return table|nil  Array of event objects, or nil on error
--- @return number     HTTP status code
+-- @return table|nil  Array of all event objects in the window, or nil on error
+-- @return number     HTTP status code (200 on success)
 function JNCApi:getEvents(start_str, end_str)
     if not self.token then
         return nil, 0
     end
 
-    local url = API_BASE
-        .. "/events?format=json&limit=200"
-        .. "&start_date=" .. start_str
-        .. "&end_date="   .. end_str
+    local all_events = {}
+    local skip = 0
+    repeat
+        local url = API_BASE
+            .. "/events?format=json&limit=200&skip=" .. skip
+            .. "&start_date=" .. start_str
+            .. "&end_date="   .. end_str
 
-    local raw, code = self:_raw_request("GET", url, nil)
-    if not raw or code ~= 200 then
-        logger.warn("JNCApi: getEvents failed, code:", code)
-        return nil, code or 0
-    end
+        local raw, code = self:_raw_request("GET", url, nil)
+        if not raw or code ~= 200 then
+            logger.warn("JNCApi: getEvents failed, code:", code, "skip:", skip)
+            -- Return what we have if we already got a page; else report the error.
+            if #all_events > 0 then break end
+            return nil, code or 0
+        end
 
-    local data, err = json.decode(raw)
-    if not data then
-        logger.warn("JNCApi: getEvents JSON decode failed:", err)
-        return nil, code
-    end
+        local data, err = json.decode(raw)
+        if not data then
+            logger.warn("JNCApi: getEvents JSON decode failed:", err)
+            if #all_events > 0 then break end
+            return nil, code
+        end
 
-    return data.events or {}, code
+        local page = data.events or {}
+        for _, e in ipairs(page) do
+            all_events[#all_events + 1] = e
+        end
+        skip = skip + #page
+
+        if data.pagination and data.pagination.lastPage then break end
+        if #page == 0 then break end          -- safety guard
+        if #all_events >= 1000 then break end  -- sanity cap (~5 pages)
+    until false
+
+    return all_events, 200
 end
 
 return JNCApi

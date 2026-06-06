@@ -1,63 +1,91 @@
 # JNC Reader
 
-A [KOReader](https://koreader.rocks/) plugin for reading [J-Novel Club](https://j-novel.club/) subscription content on KOReader-supported devices.
+A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](https://j-novel.club/) subscription directly on your e-reader, without leaving KOReader.
 
-## Design principles
+> **Active J-Novel Club subscription Requried.**
 
-- **Streaming, minimal footprint** — part content is fetched on demand and held in memory. To display it, KOReader's reader needs a real file, so the part is written to a single temporary `.html` in `koreader/jnc-reader-tmp/`. At most one part exists on disk at a time; it's cleared when you open the next part. (A future version will delete it as soon as the reader closes.)
-- **No piracy path** — the plugin provides no export, save, or download functionality. Access is gated by your active JNC subscription; if your token is invalid or your subscription has lapsed, the API returns an error and no content is shown.
-- **No third-party dependencies** — uses only libraries bundled with KOReader (`ssl.https`, `ltn12`, `json`, `mime`).
+---
 
-## Features (v0.2)
+## Features
 
-- Sign in with your J-Novel Club account; session persisted across KOReader restarts
-- **Home menu** — New Releases · Following · My Library · Sign out
-- **New Releases** — a feed of the last 14 days of pre-pub parts from series you follow, showing the part name and a relative release time ("Today", "3 days ago", "May 25, 2026"); tap to open the reader directly on that part
-- **Following** — your followed series; tap through to volumes and parts
-- **My Library** — your followed series, with owned volumes marked ★ in the series view
-- Read pre-pub parts in KOReader's native reader (pagination, fonts, bookmarks, etc.)
+- **Sign in** with your J-Novel Club account; your session is remembered across KOReader restarts.
+- **Home menu** — New Releases · Following · My Library · Sign out.
+- **New Releases** — the last 30 days of pre-pub parts from series you follow.
+- **Following** — your followed series; tap through to volumes and parts.
+- **My Library** — your followed series, with owned volumes marked ★ in the series view.
+- **Reads in KOReader's native reader** — pagination, fonts, line spacing, bookmarks, progress, and everything else KOReader gives you.
 
-> Text-only: cover thumbnails are intentionally absent in v0.2 — loading KOReader's image stack together with the network layer triggered a native crash on the Android 16 test device. See `PRODUCT_DESIGN_DOCUMENT.md` §6.
+---
+
+## Requirements
+
+- **KOReader** 2021.04 or newer.
+- An **active J-Novel Club subscription** (pre-pub access depends on your membership tier).
+- An internet/Wi-Fi connection.
+
+---
 
 ## Installation
 
-1. Copy the `jnc-reader.koplugin/` directory to the `plugins/` folder inside your KOReader installation:
-   ```
-   /mnt/onboard/.adds/koreader/plugins/jnc-reader.koplugin/
-   ```
-2. Restart KOReader.
+1. Copy the `jnc-reader.koplugin/` folder into KOReader's `plugins/` directory. The location depends on your device:
+
+   | Device          | Plugins folder                |
+   | --------------- | ----------------------------- |
+   | Kobo            | `.adds/koreader/plugins/`     |
+   | Kindle          | `koreader/plugins/`           |
+   | Android         | `<storage>/koreader/plugins/` |
+   | Desktop / other | `koreader/plugins/`           |
+
+   The result should be e.g. `…/koreader/plugins/jnc-reader.koplugin/main.lua`.
+
+2. **Restart KOReader.**
+
 3. Open the main menu → **More tools** → **JNC Reader**.
+
+---
 
 ## Usage
 
-1. Tap **JNC Reader** in the KOReader main menu.
-2. Enter your J-Novel Club email/username and password.
-3. Browse your library and tap a part to read it.
+1. Open **More tools → JNC Reader** from the KOReader menu.
+2. **Sign in** with your J-Novel Club email/username and password (only needed once — the session is saved).
+3. From the home menu, choose:
+   - **New Releases** — tap a release to start reading it immediately.
+   - **Following** — pick a series, then a part.
+   - **My Library** — pick a series to see which volumes you own (★) and read its parts.
+4. To **sign out**, open the home menu → **Sign out**.
 
-To sign out, open the KOReader main menu → **More tools** → **JNC Reader** → **Sign out**.
+---
 
-## Project structure
+## Known issues & limitations
 
+- **Novels only.** Manga is currently not supported.
+
+---
+
+## Troubleshooting
+
+To capture a log for a bug report, open `main.lua` and set:
+
+```lua
+local DEBUG = true
 ```
-jnc-reader.koplugin/
-├── _meta.lua      — Plugin metadata (name, version, author)
-├── main.lua       — Entry point; menu registration and UI flow
-├── api.lua        — JNC API client (auth, series, events, parts)
-├── renderer.lua   — Writes the self-contained part HTML to a short-lived temp file for the reader
-└── settings.lua   — Token and preference persistence
-```
+
+Restart KOReader, reproduce the issue, then collect `jnc-debug.log` from KOReader's data directory (next to its other settings). Set it back to `false` afterwards.
+
+---
 
 ## Roadmap
 
-- [ ] Cover images (deferred — blocked by a native crash when the image stack is loaded alongside the network layer; see the design doc §6)
-- [ ] Delete the temp part file as soon as the reader closes (tighter anti-piracy / cleanup)
-- [ ] Flat "owned volumes" list across all series
-- [ ] Reading progress sync (mark parts as read)
-- [ ] Follow / unfollow series in-app
-- [ ] Native C++ Kobo app (no KOReader dependency)
+- [ ] Cover images
+- [ ] Automatic return to the home folder after reading
+- [ ] Reading-progress sync (mark parts as read)
 
-## Legal
+---
 
-This plugin is unaffiliated with J-Novel Club. It uses their public API solely to display content to authenticated, subscribed users. No content is stored or redistributed.
+## License
 
-Licensed under the MIT License.
+Released under the [MIT License](LICENSE).
+
+## Disclaimer
+
+This project is **not affiliated with, endorsed by, or sponsored by J-Novel Club**. It uses J-Novel Club's API to display content to authenticated, subscribed users only. No content is stored or redistributed. All series, titles, and content are the property of their respective rights holders.
