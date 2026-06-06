@@ -8,7 +8,7 @@ A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](htt
 
 ## Features
 
-- **Sign in** with your J-Novel Club account; your session is remembered across KOReader restarts.
+- **Sign in** with your J-Novel Club account.
 - **Home menu** — New Releases · Following · My Library · Sign out.
 - **New Releases** — the last 30 days of pre-pub parts from series you follow.
 - **Following** — your followed series; tap through to volumes and parts.
@@ -63,7 +63,7 @@ A [KOReader](https://koreader.rocks/) plugin for reading your [J-Novel Club](htt
 ## Usage
 
 1. Open **More tools → JNC Reader** from the KOReader menu.
-2. **Sign in** with your J-Novel Club email/username and password (only needed once — the session is saved).
+2. **Sign in** with your J-Novel Club email/username and password.
 3. From the home menu, choose:
    - **New Releases** — tap a release to start reading it immediately.
    - **Following** — pick a series, then a part.
