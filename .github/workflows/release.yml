@@ -25,8 +25,9 @@ jobs:
           # of that name and zip it (excludes the design doc, .github, screenshots,
           # and any local/gitignored files).
           mkdir -p "dist/jnc-reader.koplugin"
-          cp _meta.lua main.lua api.lua renderer.lua settings.lua ReadMe.md LICENSE \
-             "dist/jnc-reader.koplugin/"
+          # All plugin Lua modules (api, main, renderer, settings, updater, _meta, …)
+          # plus the readme and license. Using *.lua avoids forgetting new modules.
+          cp *.lua ReadMe.md LICENSE "dist/jnc-reader.koplugin/"
           ( cd dist && zip -r "jnc-reader.koplugin.zip" "jnc-reader.koplugin" )
           ls -l dist
 
