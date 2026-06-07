@@ -37,6 +37,8 @@ local _               = require("gettext")
 local JNCApi      = require("api")
 local JNCSettings = require("settings")
 local JNCRenderer = require("renderer")
+local Updater     = require("updater")
+local meta        = require("_meta")
 
 -- ---------------------------------------------------------------------------
 -- Lightweight debug logger (appends to <data>/jnc-debug.log)
@@ -195,8 +197,46 @@ function JNCReader:onJNCReaderOpen()
         else
             self:showLogin()
         end
+        -- Check for a plugin update after the screen is up (throttled to once/day).
+        UIManager:scheduleIn(1, function() self:_maybeCheckForUpdate() end)
     end)
     return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Update check (GitHub Releases)
+-- ---------------------------------------------------------------------------
+
+local UPDATE_CHECK_INTERVAL = 24 * 60 * 60  -- once per day
+
+--- Check GitHub for a newer release and notify if one exists. Best-effort: any
+-- failure is silent. Throttled via a persisted timestamp so it runs at most once
+-- a day regardless of how often the plugin is opened. Independent of JNC login.
+function JNCReader:_maybeCheckForUpdate()
+    local last = self.settings:getPref("update_last_check", 0)
+    if (os.time() - last) < UPDATE_CHECK_INTERVAL then
+        return
+    end
+
+    local repo = meta.url and meta.url:match("github%.com/([%w._-]+/[%w._-]+)")
+    if not repo then return end
+
+    local newer_tag, checked_ok = Updater.checkForUpdate(repo, meta.version)
+    if checked_ok then
+        -- Only record the check when it actually completed, so a transient
+        -- network failure is retried next time rather than muted for a day.
+        self.settings:savePref("update_last_check", os.time())
+    end
+
+    if newer_tag then
+        local v = meta.version or { 0, 0, 0 }
+        local current = string.format("v%d.%d.%d", v[1] or 0, v[2] or 0, v[3] or 0)
+        UIManager:show(InfoMessage:new{
+            text = T(_("JNC Reader %1 is available (you have %2).\nDownload it from:\n%3/releases"),
+                     newer_tag, current, meta.url or ""),
+            timeout = 6,
+        })
+    end
 end
 
 -- ---------------------------------------------------------------------------
