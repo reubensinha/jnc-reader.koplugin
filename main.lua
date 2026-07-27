@@ -229,8 +229,16 @@ function JNCReader:_maybeCheckForUpdate()
     end
 
     if newer_tag then
-        local v = meta.version or { 0, 0, 0 }
-        local current = string.format("v%d.%d.%d", v[1] or 0, v[2] or 0, v[3] or 0)
+        -- Display the running version (a string like "0.2.1", but stay robust if it
+        -- is ever a {major,minor,patch} table again).
+        local cur = meta.version
+        local current
+        if type(cur) == "table" then
+            current = string.format("v%d.%d.%d", cur[1] or 0, cur[2] or 0, cur[3] or 0)
+        else
+            current = tostring(cur)
+            if not current:match("^[vV]") then current = "v" .. current end
+        end
         UIManager:show(InfoMessage:new{
             text = T(_("JNC Reader %1 is available (you have %2).\nDownload it from:\n%3/releases"),
                      newer_tag, current, meta.url or ""),
