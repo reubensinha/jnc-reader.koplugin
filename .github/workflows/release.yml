@@ -1,14 +1,27 @@
 name: Release
 
-# Build the installable plugin zip and attach it to a GitHub Release whenever a
-# version tag (e.g. v0.2.0) is pushed.
+# On every merge to main, bump the patch version in _meta.lua and cut a GitHub
+# Release with the installable plugin zip. Use the manual "Run workflow" button to
+# force a minor/major bump. _meta.lua's `version` string is the single source of
+# truth (read here, incremented, written back), so every release ships a correct
+# string version — which is what KOReader plugin managers read.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -16,23 +29,58 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v4
+        # The built-in GITHUB_TOKEN can push to an unprotected main. If main is
+        # protected, create a PAT with contents:write, add it as secret RELEASE_TOKEN,
+        # and set `token: ${{ secrets.RELEASE_TOKEN }}` here.
+
+      - name: Compute bumped version
+        id: ver
+        run: |
+          set -eu
+          CUR=$(grep -oP '^\s*version\s*=\s*"\K[0-9]+\.[0-9]+\.[0-9]+' _meta.lua || true)
+          if [ -z "$CUR" ]; then
+            echo "::error::_meta.lua version must be a quoted string like \"0.2.1\"."
+            exit 1
+          fi
+          IFS=. read -r MA MI PA <<< "$CUR"
+          BUMP="${{ github.event.inputs.bump }}"; BUMP="${BUMP:-patch}"
+          case "$BUMP" in
+            major) MA=$((MA + 1)); MI=0; PA=0 ;;
+            minor) MI=$((MI + 1)); PA=0 ;;
+            *)     PA=$((PA + 1)) ;;
+          esac
+          NEW="$MA.$MI.$PA"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Bumping $CUR -> $NEW ($BUMP)"
+
+      - name: Write version, commit, and tag
+        env:
+          NEW: ${{ steps.ver.outputs.new }}
+        run: |
+          set -eu
+          sed -i -E "s/^([[:space:]]*version[[:space:]]*=[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+(\".*)$/\1${NEW}\2/" _meta.lua
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add _meta.lua
+          # [skip ci] so this bump commit's push to main does NOT re-trigger the workflow.
+          git commit -m "chore(release): v${NEW} [skip ci]"
+          git tag "v${NEW}"
+          git push origin HEAD:main
+          git push origin "v${NEW}"
 
       - name: Package plugin
         run: |
           set -eu
-          # KOReader expects a folder named jnc-reader.koplugin/ inside plugins/.
-          # The repo root *is* the plugin, so stage the runtime files into a folder
-          # of that name and zip it (excludes the design doc, .github, screenshots,
-          # and any local/gitignored files).
+          # Stage the plugin into a jnc-reader.koplugin/ folder (KOReader expects that
+          # folder name in plugins/). The working tree already has the bumped _meta.lua.
           mkdir -p "dist/jnc-reader.koplugin"
-          # All plugin Lua modules (api, main, renderer, settings, updater, _meta, …)
-          # plus the readme and license. Using *.lua avoids forgetting new modules.
           cp *.lua ReadMe.md LICENSE "dist/jnc-reader.koplugin/"
           ( cd dist && zip -r "jnc-reader.koplugin.zip" "jnc-reader.koplugin" )
-          ls -l dist
 
-      - name: Create release and upload asset
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.ver.outputs.new }}
+          name: v${{ steps.ver.outputs.new }}
           files: dist/jnc-reader.koplugin.zip
           generate_release_notes: true
